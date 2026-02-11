@@ -120,7 +120,9 @@ python test_onnx.py models/model.onnx test_images/cat.jpg
 - **ONNX opset version:** We use `opset=13`, which is widely supported.  
 - **Class order:** The order of classes is determined by the alphabetical order of folder names in `data/`. The same order is used in the ONNX inference script when reading class names.  
 
-If you need to adapt the model architecture or data pipeline, simply modify the corresponding scripts. Enjoy building your classifier!
+If you need to adapt the model architecture or data pipeline, simply modify the corresponding scripts. 
+
+Enjoy building your classifier!🎉
 
 ---
 
