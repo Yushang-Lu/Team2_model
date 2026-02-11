@@ -31,7 +31,7 @@ cd Team2_model
 
 ### 2.1 Install miniconda
 
-Install miniconda at [anaconda.com](anaconda.com)
+Install Miniconda at [anaconda.com](https://www.anaconda.com)
 
 Create a Miniconda environment and activate it.  
 
@@ -114,7 +114,7 @@ python convert_to_onnx.py
 python test_onnx.py models/model.onnx test_images/cat.jpg
 ```
 
-## 📖 9. Important Notes  
+## 7. 📖 Important Notes  
 
 - **Apple Silicon Users:** Install `tensorflow-metal` to leverage the GPU for faster training.
 - **ONNX opset version:** We use `opset=13`, which is widely supported.  
