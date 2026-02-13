@@ -25,21 +25,19 @@ pip install -r requirements.txt
 
 ## 📂 数据准备
 
-请将您的图像数据按照以下结构存放：
+请将您的图像数据按照以下结构存放，**不需要手动划分验证集**：
 
 ```txt
 data/
-├── train/
-│   ├── class0/      # 第1类图像（如：猫）
-│   ├── class1/      # 第2类图像（如：狗）
-│   └── class2/      # 第3类图像（如：鸟）
-└── val/
-    ├── class0/
-    ├── class1/
-    └── class2/
+└── train/
+    ├── class0/      # 第1类图像
+    ├── class1/      # 第2类图像
+    └── class2/      # 第3类图像
 ```
 
 图像无需预先调整大小，代码会自动缩放至 `64x64`。支持 `.jpg`、`.png` 等常见格式。
+
+训练时会根据 `config.yaml` 中的 `validation_split` 比例（默认20%）**自动随机划分**验证集，且可复现（由 `seed` 控制）。
 
 ## ⚙️ 超参数调整
 
@@ -65,6 +63,7 @@ python train.py --config config.yaml
 
 - 最佳模型（验证准确率最高）自动保存为 `outputs/best_model.h5`
 - 训练曲线图保存为 `outputs/training_curves.png`
+- 混淆矩阵保存为 `outputs/confusion_matrix.png`
 - 最终模型导出为 ONNX 格式 `outputs/model.onnx`
 
 若需使用自定义配置文件，通过 `--config` 指定路径。

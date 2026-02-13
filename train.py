@@ -5,7 +5,10 @@ from tensorflow.python.keras.callbacks import ModelCheckpoint, EarlyStopping, Re
 import tf2onnx
 
 from model import build_model
-from utils import load_config, create_data_generators, plot_training_history
+from utils import (
+    load_config, create_data_generators,
+    plot_training_history, plot_confusion_matrix
+)
 
 def main(config_path):
     # 1. 加载配置
@@ -14,7 +17,7 @@ def main(config_path):
     # 2. 创建输出目录
     os.makedirs('outputs', exist_ok=True)
     
-    # 3. 数据生成器
+    # 3. 数据生成器（自动从训练集划分验证集）
     train_gen, val_gen = create_data_generators(config)
     print(f"训练样本数: {train_gen.samples}, 验证样本数: {val_gen.samples}")
     print(f"类别映射: {train_gen.class_indices}")
@@ -72,13 +75,14 @@ def main(config_path):
     # 9. 保存最终模型（可选）
     model.save('outputs/final_model.h5')
     
-    # 10. 将最佳模型转换为 ONNX
+    # 10. 加载最佳模型并绘制混淆矩阵
     best_model = tf.keras.models.load_model('outputs/best_model.h5')
+    # 获取类别名称（按索引顺序）
+    class_names = list(train_gen.class_indices.keys())
+    plot_confusion_matrix(best_model, val_gen, class_names, save_path='outputs/confusion_matrix.png')
     
-    # 指定输入签名（动态批量）
+    # 11. 将最佳模型转换为 ONNX
     spec = (tf.TensorSpec((None, *config['model']['input_size']), tf.float32, name="input"),)
-    
-    # 转换并保存
     onnx_path = config['onnx']['output_path']
     model_proto, _ = tf2onnx.convert.from_keras(
         best_model,
@@ -89,7 +93,7 @@ def main(config_path):
     print(f"ONNX 模型已保存至 {onnx_path}")
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='训练轻量化图像分类模型')
+    parser = argparse.ArgumentParser(description='训练轻量化图像分类模型（自动划分验证集）')
     parser.add_argument('--config', type=str, default='config.yaml', help='配置文件路径')
     args = parser.parse_args()
     main(args.config)
