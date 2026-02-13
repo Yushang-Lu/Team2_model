@@ -2,7 +2,7 @@ import os
 import yaml
 import tensorflow as tf
 import matplotlib.pyplot as plt
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+ImageDataGenerator = tf.keras.preprocessing.image.ImageDataGenerator
 
 def load_config(config_path='config.yaml'):
     """加载YAML配置文件"""
