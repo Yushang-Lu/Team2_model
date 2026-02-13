@@ -1,5 +1,14 @@
-tensorflow==2.12.0
+# 深度学习框架 - TensorFlow 2.13.x 稳定版
+tensorflow==2.13.0
+
+# YAML 解析库，TF 2.13 官方测试兼容版本
+pyyaml==6.0
+
+# 数据可视化，与 Python 3.11 / TF 2.13 兼容
+matplotlib==3.7.2
+
+# TensorFlow → ONNX 转换工具，明确适配 TF 2.13
 tf2onnx==1.15.1
-onnx==1.14.0
+
+# ONNX 运行时，与 tf2onnx 1.15.x 保持同版本基线
 onnxruntime==1.15.1
-Pillow==10.0.0

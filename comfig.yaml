@@ -1,0 +1,32 @@
+# 数据集路径
+data:
+  train_dir: "data/train"
+  val_dir: "data/val"
+  test_dir: null          # 可选
+
+# 模型输入
+model:
+  input_size: [64, 64, 3]
+  num_classes: 3
+
+# 训练参数
+training:
+  batch_size: 32
+  epochs: 50
+  learning_rate: 0.001
+  early_stop_patience: 10
+
+# 数据增强
+augmentation:
+  rotation_range: 20
+  width_shift_range: 0.2
+  height_shift_range: 0.2
+  shear_range: 0.2
+  zoom_range: 0.2
+  horizontal_flip: true
+  fill_mode: "nearest"
+
+# ONNX 导出设置
+onnx:
+  opset: 13
+  output_path: "outputs/model.onnx"

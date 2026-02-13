@@ -1,89 +1,95 @@
-import tensorflow as tf
-ImageDataGenerator = tf.keras.preprocessing.image.ImageDataGenerator
 import os
+import argparse
+import tensorflow as tf
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
+import tf2onnx
 
-# Hyperparameters
-BATCH_SIZE = 32
-EPOCHS = 30
-IMG_SIZE = (96, 96)
-DATA_DIR = './data'          # Root directory of the dataset, with subfolders for each category 
+from model import build_model
+from utils import load_config, create_data_generators, plot_training_history
 
-def create_lightweight_cnn():
-    model = tf.keras.Sequential([
-        tf.keras.layers.Conv2D(32, (3,3), activation='relu', input_shape=(96,96,3)),
-        tf.keras.layers.Conv2D(32, (3,3), activation='relu'),
-        tf.keras.layers.MaxPooling2D((2,2)),
-        tf.keras.layers.Conv2D(64, (3,3), activation='relu'),
-        tf.keras.layers.Conv2D(64, (3,3), activation='relu'),
-        tf.keras.layers.MaxPooling2D((2,2)),
-        tf.keras.layers.Flatten(),
-        tf.keras.layers.Dense(128, activation='relu'),
-        tf.keras.layers.Dense(64, activation='relu'),
-        tf.keras.layers.Dense(15, activation='softmax')
-    ])
-    return model
-
-def main():
-    # Data augmentation and normalization
-    train_datagen = ImageDataGenerator(
-        rescale=1./255,
-        rotation_range=10,
-        width_shift_range=0.1,
-        height_shift_range=0.1,
-        horizontal_flip=True,
-        validation_split=0.2          # Use 20% data as validtion set
+def main(config_path):
+    # 1. 加载配置
+    config = load_config(config_path)
+    
+    # 2. 创建输出目录
+    os.makedirs('outputs', exist_ok=True)
+    
+    # 3. 数据生成器
+    train_gen, val_gen = create_data_generators(config)
+    print(f"训练样本数: {train_gen.samples}, 验证样本数: {val_gen.samples}")
+    print(f"类别映射: {train_gen.class_indices}")
+    
+    # 4. 构建模型
+    model = build_model(
+        input_shape=tuple(config['model']['input_size']),
+        num_classes=config['model']['num_classes']
     )
-
-    # Training generator
-    train_generator = train_datagen.flow_from_directory(
-        DATA_DIR,
-        target_size=IMG_SIZE,
-        batch_size=BATCH_SIZE,
-        class_mode='categorical',
-        subset='training'
-    )
-
-    # Validation generator
-    val_generator = train_datagen.flow_from_directory(
-        DATA_DIR,
-        target_size=IMG_SIZE,
-        batch_size=BATCH_SIZE,
-        class_mode='categorical',
-        subset='validation'
-    )
-
-    # Build model
-    model = create_lightweight_cnn()
     model.summary()
-
-    # Compile model
+    
+    # 5. 编译模型
     model.compile(
-        optimizer='adam',
+        optimizer=tf.keras.optimizers.Adam(learning_rate=config['training']['learning_rate']),
         loss='categorical_crossentropy',
         metrics=['accuracy']
     )
-
-    # Callback: save the best model
-    checkpoint = tf.keras.callbacks.ModelCheckpoint(
-        'models/best_model.h5',
-        monitor='val_accuracy',
-        save_best_only=True,
-        mode='max'
-    )
-
-    # Train model
+    
+    # 6. 回调函数
+    callbacks = [
+        ModelCheckpoint(
+            'outputs/best_model.h5',
+            monitor='val_accuracy',
+            save_best_only=True,
+            mode='max',
+            verbose=1
+        ),
+        EarlyStopping(
+            monitor='val_loss',
+            patience=config['training']['early_stop_patience'],
+            restore_best_weights=True,
+            verbose=1
+        ),
+        ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.5,
+            patience=5,
+            min_lr=1e-7,
+            verbose=1
+        )
+    ]
+    
+    # 7. 训练模型
     history = model.fit(
-        train_generator,
-        steps_per_epoch=train_generator.samples // BATCH_SIZE,
-        validation_data=val_generator,
-        validation_steps=val_generator.samples // BATCH_SIZE,
-        epochs=EPOCHS,
-        callbacks=[checkpoint]
+        train_gen,
+        epochs=config['training']['epochs'],
+        validation_data=val_gen,
+        callbacks=callbacks,
+        verbose=1
     )
-
-    # Save final model
-    model.save('models/final_model.h5')
-    print("Model saved to models/final_model.h5")
+    
+    # 8. 可视化训练曲线
+    plot_training_history(history, save_path='outputs/training_curves.png')
+    
+    # 9. 保存最终模型（可选）
+    model.save('outputs/final_model.h5')
+    
+    # 10. 将最佳模型转换为 ONNX
+    best_model = tf.keras.models.load_model('outputs/best_model.h5')
+    
+    # 指定输入签名（动态批量）
+    spec = (tf.TensorSpec((None, *config['model']['input_size']), tf.float32, name="input"),)
+    
+    # 转换并保存
+    onnx_path = config['onnx']['output_path']
+    model_proto, _ = tf2onnx.convert.from_keras(
+        best_model,
+        input_signature=spec,
+        opset=config['onnx']['opset'],
+        output_path=onnx_path
+    )
+    print(f"ONNX 模型已保存至 {onnx_path}")
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description='训练轻量化图像分类模型')
+    parser.add_argument('--config', type=str, default='config.yaml', help='配置文件路径')
+    args = parser.parse_args()
+    main(args.config)
