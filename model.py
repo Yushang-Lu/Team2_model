@@ -1,5 +1,5 @@
 import tensorflow as tf
-from tensorflow.python.keras import layers, Model
+from tensorflow.keras import layers, Model # type: ignore
 
 def build_model(input_shape=(64,64,3), num_classes=3):
     """
@@ -54,7 +54,7 @@ def build_model(input_shape=(64,64,3), num_classes=3):
     
     # 分类头
     x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dropout(0.5)(x)
+    x = layers.Dropout(0.3)(x)
     outputs = layers.Dense(num_classes, activation='softmax')(x)
     
     model = Model(inputs, outputs, name='Lightweight_SeparableCNN')

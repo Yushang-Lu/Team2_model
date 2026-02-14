@@ -1,7 +1,7 @@
 import os
 import argparse
 import tensorflow as tf
-from tensorflow.python.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau # type: ignore
 import tf2onnx
 
 from model import build_model
