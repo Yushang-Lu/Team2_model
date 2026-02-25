@@ -1,99 +1,181 @@
 import os
+import yaml
 import argparse
+import numpy as np
 import tensorflow as tf
-from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau # type: ignore
-import tf2onnx
-
-from model import build_model
-from utils import (
-    load_config, create_data_generators,
-    plot_training_history, plot_confusion_matrix
-)
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, CSVLogger, LearningRateScheduler # type: ignore
+from utils.data_loader import create_dataset, compute_class_weights, get_class_names_from_dir
+from models.model_builder import build_model, get_optimizer, get_lr_scheduler
+from utils.visualize import plot_training_history, plot_confusion_matrix, save_classification_report
 
 def main(config_path):
-    # 1. 加载配置
-    config = load_config(config_path)
+    # 加载配置
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
     
-    # 2. 创建输出目录
-    os.makedirs('outputs', exist_ok=True)
+    # 创建输出目录
+    os.makedirs(config['logging']['log_dir'], exist_ok=True)
+    os.makedirs(config['logging']['model_dir'], exist_ok=True)
+    os.makedirs(config['logging']['output_dir'], exist_ok=True)
     
-    # 3. 数据生成器（自动从训练集划分验证集）
-    train_gen, val_gen = create_data_generators(config)
-    print(f"训练样本数: {train_gen.samples}, 验证样本数: {val_gen.samples}")
-    print(f"类别映射: {train_gen.class_indices}")
+    # 数据加载
+    train_dir = config['data']['train_dir']
+    val_dir = config['data']['val_dir']
+    image_size = tuple(config['data']['image_size'])
+    batch_size = config['data']['batch_size']
     
-    # 4. 构建模型
-    model = build_model(
-        input_shape=tuple(config['model']['input_size']),
-        num_classes=config['model']['num_classes']
-    )
+    if val_dir and os.path.exists(val_dir):
+        # 使用独立验证集
+        train_dataset, _, class_names = create_dataset(
+            train_dir, image_size, batch_size, is_training=True,
+            augment_config=config, validation_split=None
+        )
+        val_dataset, _, _ = create_dataset(
+            val_dir, image_size, batch_size, is_training=False,
+            augment_config=None, validation_split=None
+        )
+    else:
+        # 从训练集划分验证集
+        validation_split = config['data']['validation_split']
+        train_dataset, val_dataset, class_names = create_dataset(
+            train_dir, image_size, batch_size, is_training=True,
+            augment_config=config, validation_split=validation_split
+        )
+    
+    # 计算类别权重
+    class_weights = compute_class_weights(train_dir, class_names)
+    print("Class weights:", class_weights)
+    
+    # 计算步数
+    num_train_images = sum([len(files) for r, d, files in os.walk(train_dir) if any(f.endswith('.png') for f in files)])
+    steps_per_epoch = int(num_train_images // batch_size)
+    if val_dataset is not None:
+        if val_dir and os.path.exists(val_dir):
+            num_val_images = sum([len(files) for r, d, files in os.walk(val_dir) if any(f.endswith('.png') for f in files)])
+        else:
+            total_train_images = sum([len(files) for r, d, files in os.walk(train_dir) if any(f.endswith('.png') for f in files)])
+            num_val_images = int(total_train_images * validation_split)  # 取整
+            validation_steps = int(max(1, num_val_images // batch_size))
+    else:
+        validation_steps = None
+    
+    # 构建模型
+    model, base_model = build_model(config)
     model.summary()
     
-    # 5. 编译模型
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=config['training']['learning_rate']),
-        loss='categorical_crossentropy',
-        metrics=['accuracy']
-    )
+    # 第一阶段训练（冻结基模型）
+    print("Stage 1: Training top layers with frozen backbone")
+    base_model.trainable = False  # 确保冻结
+    optimizer_stage1 = get_optimizer(config['training']['optimizer'], config['training']['learning_rate_stage1'])
+    model.compile(optimizer=optimizer_stage1, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     
-    # 6. 回调函数
-    callbacks = [
-        ModelCheckpoint(
-            'outputs/best_model.h5',
-            monitor='val_accuracy',
-            save_best_only=True,
-            mode='max',
-            verbose=1
-        ),
-        EarlyStopping(
-            monitor='val_loss',
-            patience=config['training']['early_stop_patience'],
-            restore_best_weights=True,
-            verbose=1
-        ),
-        ReduceLROnPlateau(
-            monitor='val_loss',
-            factor=0.5,
-            patience=5,
-            min_lr=1e-7,
-            verbose=1
-        )
+    callbacks_stage1 = [
+        ModelCheckpoint(os.path.join(config['logging']['model_dir'], 'best_model_stage1.weights.h5'),
+                        monitor='val_accuracy', save_best_only=True, mode='max', save_weights_only=True),
+        EarlyStopping(monitor='val_accuracy', patience=config['training']['early_stop_patience'], restore_best_weights=True),
+        CSVLogger(os.path.join(config['logging']['log_dir'], 'training_stage1.log'))
     ]
     
-    # 7. 训练模型
-    history = model.fit(
-        train_gen,
-        epochs=config['training']['epochs'],
-        validation_data=val_gen,
-        callbacks=callbacks,
+    # 学习率调度（如果是ReduceLROnPlateau则添加回调）
+    if config['training']['lr_schedule_1'] == 'reduce_on_plateau':
+        callbacks_stage1.append(ReduceLROnPlateau(monitor='val_loss', patience=config['training']['reduce_lr_patience'],
+                                                   factor=config['training']['reduce_lr_factor'], verbose=1))
+    
+    history_stage1 = model.fit(
+        train_dataset,
+        epochs=config['training']['epochs_stage1'],
+        steps_per_epoch=steps_per_epoch,
+        validation_data=val_dataset,
+        validation_steps=validation_steps,
+        class_weight=class_weights,
+        callbacks=callbacks_stage1,
         verbose=1
     )
     
-    # 8. 可视化训练曲线
-    plot_training_history(history, save_path='outputs/training_curves.png')
+    # 第二阶段：微调（解冻基模型部分层）
+    print("Stage 2: Fine-tuning with unfrozen backbone layers")
+    finetune_layers = config['model']['finetune_layers']
+    if finetune_layers == -1:
+        base_model.trainable = True
+    else:
+        # 解冻最后 finetune_layers 层
+        base_model.trainable = True
+        for layer in base_model.layers[:-finetune_layers]:
+            layer.trainable = False
     
-    # 9. 保存最终模型（可选）
-    model.save('outputs/final_model.h5')
+    # 重新编译（使用更低学习率）
+    optimizer_stage2 = get_optimizer(config['training']['optimizer'], config['training']['learning_rate_stage2'])
+    model.compile(optimizer=optimizer_stage2, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     
-    # 10. 加载最佳模型并绘制混淆矩阵
-    best_model = tf.keras.models.load_model('outputs/best_model.h5')
-    # 获取类别名称（按索引顺序）
-    class_names = list(train_gen.class_indices.keys())
-    plot_confusion_matrix(best_model, val_gen, class_names, save_path='outputs/confusion_matrix.png')
+    callbacks_stage2 = [
+        ModelCheckpoint(os.path.join(config['logging']['model_dir'], 'best_model_final.weights.h5'),
+                        monitor='val_accuracy', save_best_only=True, mode='max', save_weights_only=True),
+        EarlyStopping(monitor='val_accuracy', patience=config['training']['early_stop_patience'], restore_best_weights=True),
+        CSVLogger(os.path.join(config['logging']['log_dir'], 'training_stage2.log'))
+    ]
     
-    # 11. 将最佳模型转换为 ONNX
-    spec = (tf.TensorSpec((None, *config['model']['input_size']), tf.float32, name="input"),)
-    onnx_path = config['onnx']['output_path']
-    model_proto, _ = tf2onnx.convert.from_keras(
-        best_model,
-        input_signature=spec,
-        opset=config['onnx']['opset'],
-        output_path=onnx_path
+    if config['training']['lr_schedule_2'] == 'reduce_on_plateau':
+        callbacks_stage2.append(ReduceLROnPlateau(monitor='val_loss', patience=config['training']['reduce_lr_patience'],
+                                                   factor=config['training']['reduce_lr_factor'], verbose=1))
+    elif config['training']['lr_schedule_2'] == 'cosine':
+        # 使用余弦退火调度，需要自定义回调或使用LearningRateScheduler
+        # 简单使用CosineDecay作为优化器的学习率调度，但这样每步衰减，不是每epoch回调
+        # 这里采用LearningRateScheduler模拟余弦衰减（每epoch调整）
+        total_epochs = config['training']['epochs_stage2']
+        initial_lr = config['training']['learning_rate_stage2']
+        def cosine_scheduler(epoch, lr):
+            progress = (epoch) / total_epochs
+            cosine_decay = 0.5 * (1 + np.cos(np.pi * progress))
+            return initial_lr * cosine_decay
+        callbacks_stage2.append(LearningRateScheduler(cosine_scheduler, verbose=1))
+    
+    history_stage2 = model.fit(
+        train_dataset,
+        epochs=config['training']['epochs_stage2'],
+        steps_per_epoch=steps_per_epoch,
+        validation_data=val_dataset,
+        validation_steps=validation_steps,
+        class_weight=class_weights,
+        callbacks=callbacks_stage2,
+        verbose=1
     )
-    print(f"ONNX 模型已保存至 {onnx_path}")
+    
+    # 重新构建模型（使用相同的 build_model 函数）
+    model, _ = build_model(config)
+    # 加载权重
+    model.load_weights(os.path.join(config['logging']['model_dir'], 'best_model_final.weights.h5'))
+    # 如果需要评估，则编译（可选）
+    model.compile(optimizer=config['training']['optimizer'], loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
+    # 在验证集上评估
+    y_true = []
+    y_pred = []
+    for images, labels in val_dataset:
+        preds = model.predict(images)
+        y_true.extend(labels.numpy())
+        y_pred.extend(np.argmax(preds, axis=1))
+        if len(y_true) >= num_val_images:
+            break
+    y_true = y_true[:num_val_images]
+    y_pred = y_pred[:num_val_images]
+    
+    # 保存混淆矩阵和分类报告
+    plot_confusion_matrix(y_true, y_pred, class_names,
+                          os.path.join(config['logging']['output_dir'], 'confusion_matrix.png'))
+    save_classification_report(y_true, y_pred, class_names,
+                               os.path.join(config['logging']['output_dir'], 'classification_report.txt'))
+    
+    # 绘制训练曲线（合并两个阶段的history）
+    combined_history = history_stage1.history
+    for k, v in history_stage2.history.items():
+        combined_history.setdefault(k, []).extend(v)
+    plot_training_history(combined_history,
+                          os.path.join(config['logging']['output_dir'], 'training_curves.png'))
+    
+    print("Training completed successfully.")
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='训练轻量化图像分类模型（自动划分验证集）')
-    parser.add_argument('--config', type=str, default='config.yaml', help='配置文件路径')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', type=str, default='config.yaml', help='Path to config file')
     args = parser.parse_args()
     main(args.config)

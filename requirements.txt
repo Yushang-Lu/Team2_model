@@ -1,9 +1,8 @@
-# 核心依赖
-tensorflow==2.13.0
-pyyaml==6.0.1
-matplotlib==3.7.2
-scikit-learn==1.2.2
-
-# ONNX 转换与推理
-tf2onnx==1.15.1
-onnxruntime==1.15.1
+tensorflow>=2.10
+pyyaml
+numpy
+matplotlib
+scikit-learn
+tf2onnx
+pillow
+seaborn
