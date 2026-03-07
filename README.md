@@ -70,6 +70,14 @@ python train.py --config config.yaml
 python export_onnx.py --weights models/best_model_final.weights.h5 --output models/model.onnx --config config.yaml
 ```
 
+## 模型导出为TFLite
+
+训练完成后，使用以下命令将Keras模型转换为TFLite格式：
+
+```bash
+python export_tflite.py --weights models/best_model_final.weights.h5 --output models/model.tflite --config config.yaml
+```
+
 ## 模型部署
 
-待编写
+详见逐飞科技[推文](https://mp.weixin.qq.com/s/kESJdQ39PskYBtFpn8QhZw)
