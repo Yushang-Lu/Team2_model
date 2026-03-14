@@ -80,4 +80,4 @@ python export_tflite.py --weights models/best_model_final.weights.h5 --output mo
 
 ## 模型部署
 
-详见逐飞科技[推文](https://mp.weixin.qq.com/s/kESJdQ39PskYBtFpn8QhZw)
+详见*逐飞科技*[推文](https://mp.weixin.qq.com/s/kESJdQ39PskYBtFpn8QhZw)
