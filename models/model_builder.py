@@ -1,14 +1,14 @@
 import tensorflow as tf
 from tensorflow.keras import layers, Model # type: ignore
-from tensorflow.keras.applications import MobileNetV3Small # type: ignore
+from tensorflow.keras.applications import MobileNetV3Large # type: ignore
 
 def build_model(config):
-    """构建MobileNetV3Small迁移学习模型"""
+    """构建MobileNetV3Large迁移学习模型"""
     input_shape = config['model']['input_shape']
     num_classes = config['data']['num_classes']
     
     # 加载基模型
-    base_model = MobileNetV3Small(
+    base_model = MobileNetV3Large(
         input_shape=input_shape,
         include_top=False,
         weights=config['model']['weights'],

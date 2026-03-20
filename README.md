@@ -1,6 +1,6 @@
 # 轻量化图像分类模型
 
-本模型使用TensorFlow 2.x框架搭建，并使用迁移学习策略(MobileNetV3 Small)实现64×64彩色图像的3分类。
+本模型使用TensorFlow 2.x框架搭建，并使用迁移学习策略(MobileNetV3 Large)实现64×64彩色图像的3分类。
 
 ## 环境配置
 

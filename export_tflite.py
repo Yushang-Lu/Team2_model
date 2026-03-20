@@ -2,14 +2,14 @@ import os
 import yaml
 import argparse
 import tensorflow as tf
-from tensorflow.keras.applications import MobileNetV3Small # type: ignore
+from tensorflow.keras.applications import MobileNetV3Large # type: ignore
 from tensorflow.keras import layers, Model # type: ignore
 
 def build_model(config):
     input_shape = config['model']['input_shape']
     num_classes = config['data']['num_classes']
 
-    base_model = MobileNetV3Small(
+    base_model = MobileNetV3Large(
         input_shape=input_shape,
         include_top=False,
         weights=None,

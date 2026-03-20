@@ -2,13 +2,13 @@ import os
 import yaml
 import argparse
 import tensorflow as tf
-from tensorflow.keras.applications import MobileNetV3Small # type: ignore
+from tensorflow.keras.applications import MobileNetV3Large # type: ignore
 from tensorflow.keras import layers, Model # type: ignore
 import tf2onnx
 
 def build_model(config):
     """
-    根据配置构建 MobileNetV3Small 迁移学习模型。
+    根据配置构建 MobileNetV3Large 迁移学习模型。
     返回完整的 Keras 模型（忽略基模型，只需主模型用于权重加载和转换）。
     """
     input_shape = config['model']['input_shape']
@@ -16,7 +16,7 @@ def build_model(config):
     
     # 加载基模型（此处设置 weights=None 避免加载预训练权重，加快构建速度）
     # 随后加载 .weights.h5 会覆盖预训练权重。
-    base_model = MobileNetV3Small(
+    base_model = MobileNetV3Large(
         input_shape=input_shape,
         include_top=False,
         weights=None,                # 改为 None，仅构建架构

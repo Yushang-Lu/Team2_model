@@ -15,7 +15,7 @@ data:
 
 # 模型配置
 model:
-  backbone: "MobileNetV3Small"
+  backbone: "MobileNetV3Large"         # 可选 "MobileNetV3Small", "MobileNetV3Large"
   input_shape: [64, 64, 3]
   weights: "imagenet"
   freeze_backbone: true                # 第一阶段冻结基模型
