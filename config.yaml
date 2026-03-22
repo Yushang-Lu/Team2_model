@@ -1,42 +1,39 @@
-# 数据配置
 data:
-  train_dir: "data/train"              # 训练集路径
-  val_dir: null                        # 验证集路径，若为null则从训练集划分
-  validation_split: 0.2                # 当val_dir为null时，从训练集划分的比例
-  image_size: [64, 64]                 # 输入图像大小
+  train_dir: data/train
+  val_dir: null
+  test_dir: null
+  validation_split: 0.15
+  image_size: [64, 64]
   batch_size: 32
   num_classes: 3
-  class_names: null                    # 若null则从子目录自动读取
-  augmentations:
-    random_flip: "horizontal"          # 随机水平翻转
-    random_rotation: 15                # 随机旋转角度范围（度）
-    random_brightness: 0.1             # 亮度调整范围
-    random_contrast: [0.8, 1.2]        # 对比度调整范围
+  seed: 42
+  augmentation:
+    horizontal_flip: true
+    rotation_factor: 0.02
+    zoom_factor: 0.05
 
-# 模型配置
 model:
-  backbone: "MobileNetV3Large"         # 可选 "MobileNetV3Small", "MobileNetV3Large"
-  input_shape: [64, 64, 3]
-  weights: "imagenet"
-  freeze_backbone: true                # 第一阶段冻结基模型
-  finetune_layers: 5                   # 第二阶段解冻基模型最后100层（若为-1则解冻全部）
+  backbone: MobileNetV3Small
+  weights: imagenet
+  dropout_rate: 0.2
 
-# 训练配置
 training:
-  epochs_stage1: 50                    # 第一阶段（冻结基模型）训练轮数
-  epochs_stage2: 150                   # 第二阶段（微调）训练轮数
-  optimizer: "adam"                    # 可选 "adam", "sgd"
-  learning_rate_stage1: 0.001
-  learning_rate_stage2: 0.0001
-  lr_schedule_1: "reduce_on_plateau"   # 可选 "cosine", "reduce_on_plateau"
-  lr_schedule_2: "cosine"
-  early_stop_patience: 100
+  stage1_epochs: 12
+  stage2_epochs: 36
+  stage1_learning_rate: 0.001
+  stage2_learning_rate: 0.0001
+  fine_tune_layers: 12
+  early_stopping_patience: 8
   reduce_lr_patience: 3
   reduce_lr_factor: 0.2
-  cosine_decay_steps: 1000             # 余弦退火总步数（若使用cosine）
 
-# 日志与输出
-logging:
-  log_dir: "logs/"
-  model_dir: "models/"
-  output_dir: "outputs/"
+paths:
+  artifact_dir: artifacts
+  log_dir: logs
+  report_dir: reports
+  tflite_report_dir: reports/tflite
+  compare_report_dir: reports/compare
+
+export:
+  tflite_path: artifacts/model.tflite
+  quantize: dynamic

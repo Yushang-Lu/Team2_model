@@ -1,8 +1,6 @@
-tensorflow>=2.10
-pyyaml
-numpy
-matplotlib
-scikit-learn
-tf2onnx
-pillow
-seaborn
+tensorflow>=2.10,<2.17
+PyYAML>=6.0
+numpy>=1.23
+matplotlib>=3.6
+scikit-learn>=1.1
+Pillow>=9.0

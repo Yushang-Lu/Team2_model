@@ -1,54 +1,70 @@
-import tensorflow as tf
-from tensorflow.keras import layers, Model # type: ignore
-from tensorflow.keras.applications import MobileNetV3Large # type: ignore
+from __future__ import annotations
 
-def build_model(config):
-    """构建MobileNetV3Large迁移学习模型"""
-    input_shape = config['model']['input_shape']
-    num_classes = config['data']['num_classes']
-    
-    # 加载基模型
-    base_model = MobileNetV3Large(
+from typing import Any
+
+import tensorflow as tf
+from tensorflow.keras import Model, layers # type: ignore
+from tensorflow.keras.applications import MobileNetV3Small # type: ignore
+
+SUPPORTED_BACKBONE = "MobileNetV3Small"
+
+
+def build_classifier(config: dict[str, Any]) -> tuple[Model, tf.keras.Model]:
+    """Build the MobileNetV3Small transfer learning classifier."""
+    model_cfg = config["model"]
+    data_cfg = config["data"]
+
+    backbone_name = model_cfg.get("backbone", SUPPORTED_BACKBONE)
+    if backbone_name != SUPPORTED_BACKBONE:
+        raise ValueError(
+            f"当前版本仅支持 {SUPPORTED_BACKBONE}，收到: {backbone_name}"
+        )
+
+    input_shape = tuple(data_cfg["image_size"]) + (3,)
+    num_classes = int(data_cfg["num_classes"])
+    dropout_rate = float(model_cfg.get("dropout_rate", 0.2))
+
+    # Keep MobileNetV3's built-in preprocessing enabled so the backbone
+    # receives the same input scale as the ImageNet pretraining setup.
+    base_model = MobileNetV3Small(
         input_shape=input_shape,
         include_top=False,
-        weights=config['model']['weights'],
-        pooling='avg'  # 全局平均池化
+        weights=model_cfg.get("weights", "imagenet"),
     )
-    
-    # 初始冻结基模型
-    base_model.trainable = not config['model']['freeze_backbone']
-    
-    # 构建完整模型
-    inputs = tf.keras.Input(shape=input_shape)
-    x = base_model(inputs, training=False)  # 冻结时设置training=False
-    x = layers.Dropout(0.2)(x)
-    outputs = layers.Dense(num_classes, activation='softmax')(x)
-    model = Model(inputs, outputs)
-    
+    base_model.trainable = False
+
+    inputs = tf.keras.Input(shape=input_shape, name="image")
+    x = base_model(inputs, training=False)
+    x = layers.GlobalAveragePooling2D(name="avg_pool")(x)
+    x = layers.Dropout(dropout_rate, name="dropout")(x)
+    outputs = layers.Dense(
+        num_classes,
+        activation="softmax",
+        name="predictions",
+    )(x)
+
+    model = Model(inputs=inputs, outputs=outputs, name="mobilenetv3small_classifier")
     return model, base_model
 
-def get_optimizer(optimizer_name, learning_rate):
-    """根据名称返回优化器实例"""
-    if optimizer_name.lower() == 'adam':
-        return tf.keras.optimizers.Adam(learning_rate=learning_rate)
-    elif optimizer_name.lower() == 'sgd':
-        return tf.keras.optimizers.SGD(learning_rate=learning_rate, momentum=0.9)
-    else:
-        raise ValueError(f"Unsupported optimizer: {optimizer_name}")
 
-def get_lr_scheduler(schedule_name, initial_lr, steps_per_epoch, total_epochs):
-    """返回学习率调度器回调或schedule函数"""
-    if schedule_name == 'cosine':
-        # 使用余弦退火
-        decay_steps = steps_per_epoch * total_epochs
-        lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
-            initial_learning_rate=initial_lr,
-            decay_steps=decay_steps,
-            alpha=0.0  # 最终学习率降到0
-        )
-        return lr_schedule
-    elif schedule_name == 'reduce_on_plateau':
-        # ReduceLROnPlateau作为回调，这里返回None，由回调处理
-        return None
+def set_backbone_trainable_layers(
+    base_model: tf.keras.Model,
+    fine_tune_layers: int,
+) -> None:
+    """Unfreeze the tail of the backbone while keeping BatchNorm frozen."""
+    for layer in base_model.layers:
+        layer.trainable = False
+
+    if fine_tune_layers == 0:
+        return
+
+    if fine_tune_layers < 0:
+        candidate_layers = list(base_model.layers)
     else:
-        return None  # 恒定学习率
+        candidate_layers = list(base_model.layers[-fine_tune_layers:])
+
+    for layer in candidate_layers:
+        if isinstance(layer, tf.keras.layers.BatchNormalization):
+            layer.trainable = False
+        else:
+            layer.trainable = True

@@ -208,3 +208,7 @@ __marimo__/
 
 #Others
 .DS_Store
+artifacts
+data
+logs
+reports

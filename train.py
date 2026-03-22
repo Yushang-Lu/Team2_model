@@ -1,181 +1,226 @@
-import os
-import yaml
+from __future__ import annotations
+
 import argparse
-import numpy as np
+import json
+import shutil
+from pathlib import Path
+from typing import Any
+
 import tensorflow as tf
-from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, CSVLogger, LearningRateScheduler # type: ignore
-from utils.data_loader import create_dataset, compute_class_weights, get_class_names_from_dir
-from models.model_builder import build_model, get_optimizer, get_lr_scheduler
-from utils.visualize import plot_training_history, plot_confusion_matrix, save_classification_report
+import yaml
 
-def main(config_path):
-    # 加载配置
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    
-    # 创建输出目录
-    os.makedirs(config['logging']['log_dir'], exist_ok=True)
-    os.makedirs(config['logging']['model_dir'], exist_ok=True)
-    os.makedirs(config['logging']['output_dir'], exist_ok=True)
-    
-    # 数据加载
-    train_dir = config['data']['train_dir']
-    val_dir = config['data']['val_dir']
-    image_size = tuple(config['data']['image_size'])
-    batch_size = config['data']['batch_size']
-    
-    if val_dir and os.path.exists(val_dir):
-        # 使用独立验证集
-        train_dataset, _, class_names = create_dataset(
-            train_dir, image_size, batch_size, is_training=True,
-            augment_config=config, validation_split=None
-        )
-        val_dataset, _, _ = create_dataset(
-            val_dir, image_size, batch_size, is_training=False,
-            augment_config=None, validation_split=None
-        )
-    else:
-        # 从训练集划分验证集
-        validation_split = config['data']['validation_split']
-        train_dataset, val_dataset, class_names = create_dataset(
-            train_dir, image_size, batch_size, is_training=True,
-            augment_config=config, validation_split=validation_split
-        )
-    
-    # 计算类别权重
-    class_weights = compute_class_weights(train_dir, class_names)
-    print("Class weights:", class_weights)
-    
-    # 计算步数
-    num_train_images = sum([len(files) for r, d, files in os.walk(train_dir) if any(f.endswith('.png') for f in files)])
-    steps_per_epoch = int(num_train_images // batch_size)
-    if val_dataset is not None:
-        if val_dir and os.path.exists(val_dir):
-            num_val_images = sum([len(files) for r, d, files in os.walk(val_dir) if any(f.endswith('.png') for f in files)])
-        else:
-            total_train_images = sum([len(files) for r, d, files in os.walk(train_dir) if any(f.endswith('.png') for f in files)])
-            num_val_images = int(total_train_images * validation_split)  # 取整
-            validation_steps = int(max(1, num_val_images // batch_size))
-    else:
-        validation_steps = None
-    
-    # 构建模型
-    model, base_model = build_model(config)
-    model.summary()
-    
-    # 第一阶段训练（冻结基模型）
-    print("Stage 1: Training top layers with frozen backbone")
-    base_model.trainable = False  # 确保冻结
-    optimizer_stage1 = get_optimizer(config['training']['optimizer'], config['training']['learning_rate_stage1'])
-    model.compile(optimizer=optimizer_stage1, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-    
-    callbacks_stage1 = [
-        ModelCheckpoint(os.path.join(config['logging']['model_dir'], 'best_model_stage1.weights.h5'),
-                        monitor='val_accuracy', save_best_only=True, mode='max', save_weights_only=True),
-        EarlyStopping(monitor='val_accuracy', patience=config['training']['early_stop_patience'], restore_best_weights=True),
-        CSVLogger(os.path.join(config['logging']['log_dir'], 'training_stage1.log'))
-    ]
-    
-    # 学习率调度（如果是ReduceLROnPlateau则添加回调）
-    if config['training']['lr_schedule_1'] == 'reduce_on_plateau':
-        callbacks_stage1.append(ReduceLROnPlateau(monitor='val_loss', patience=config['training']['reduce_lr_patience'],
-                                                   factor=config['training']['reduce_lr_factor'], verbose=1))
-    
-    history_stage1 = model.fit(
-        train_dataset,
-        epochs=config['training']['epochs_stage1'],
-        steps_per_epoch=steps_per_epoch,
-        validation_data=val_dataset,
-        validation_steps=validation_steps,
-        class_weight=class_weights,
-        callbacks=callbacks_stage1,
-        verbose=1
+from models.model_builder import build_classifier, set_backbone_trainable_layers
+from utils.data_utils import create_datasets, save_class_names
+from utils.visualize import (
+    plot_confusion_matrix,
+    plot_training_history,
+    save_classification_report,
+    save_history,
+)
+
+
+def load_config(config_path: Path) -> dict[str, Any]:
+    with config_path.open("r", encoding="utf-8") as file:
+        return yaml.safe_load(file)
+
+
+def ensure_output_dirs(config: dict[str, Any]) -> tuple[Path, Path, Path]:
+    paths_cfg = config["paths"]
+    artifact_dir = Path(paths_cfg["artifact_dir"])
+    log_dir = Path(paths_cfg["log_dir"])
+    report_dir = Path(paths_cfg["report_dir"])
+
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    return artifact_dir, log_dir, report_dir
+
+
+def compile_model(model: tf.keras.Model, learning_rate: float) -> None:
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"],
     )
-    
-    # 第二阶段：微调（解冻基模型部分层）
-    print("Stage 2: Fine-tuning with unfrozen backbone layers")
-    finetune_layers = config['model']['finetune_layers']
-    if finetune_layers == -1:
-        base_model.trainable = True
-    else:
-        # 解冻最后 finetune_layers 层
-        base_model.trainable = True
-        for layer in base_model.layers[:-finetune_layers]:
-            layer.trainable = False
-    
-    # 重新编译（使用更低学习率）
-    optimizer_stage2 = get_optimizer(config['training']['optimizer'], config['training']['learning_rate_stage2'])
-    model.compile(optimizer=optimizer_stage2, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-    
-    callbacks_stage2 = [
-        ModelCheckpoint(os.path.join(config['logging']['model_dir'], 'best_model_final.weights.h5'),
-                        monitor='val_accuracy', save_best_only=True, mode='max', save_weights_only=True),
-        EarlyStopping(monitor='val_accuracy', patience=config['training']['early_stop_patience'], restore_best_weights=True),
-        CSVLogger(os.path.join(config['logging']['log_dir'], 'training_stage2.log'))
+
+
+def build_callbacks(
+    checkpoint_path: Path,
+    log_path: Path,
+    config: dict[str, Any],
+) -> list[tf.keras.callbacks.Callback]:
+    training_cfg = config["training"]
+    return [
+        tf.keras.callbacks.ModelCheckpoint(
+            filepath=str(checkpoint_path),
+            monitor="val_accuracy",
+            mode="max",
+            save_best_only=True,
+            verbose=1,
+        ),
+        tf.keras.callbacks.EarlyStopping(
+            monitor="val_accuracy",
+            mode="max",
+            patience=int(training_cfg["early_stopping_patience"]),
+            restore_best_weights=True,
+            verbose=1,
+        ),
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor="val_loss",
+            factor=float(training_cfg["reduce_lr_factor"]),
+            patience=int(training_cfg["reduce_lr_patience"]),
+            min_lr=1e-6,
+            verbose=1,
+        ),
+        tf.keras.callbacks.CSVLogger(str(log_path)),
     ]
-    
-    if config['training']['lr_schedule_2'] == 'reduce_on_plateau':
-        callbacks_stage2.append(ReduceLROnPlateau(monitor='val_loss', patience=config['training']['reduce_lr_patience'],
-                                                   factor=config['training']['reduce_lr_factor'], verbose=1))
-    elif config['training']['lr_schedule_2'] == 'cosine':
-        # 使用余弦退火调度，需要自定义回调或使用LearningRateScheduler
-        # 简单使用CosineDecay作为优化器的学习率调度，但这样每步衰减，不是每epoch回调
-        # 这里采用LearningRateScheduler模拟余弦衰减（每epoch调整）
-        total_epochs = config['training']['epochs_stage2']
-        initial_lr = config['training']['learning_rate_stage2']
-        def cosine_scheduler(epoch, lr):
-            progress = (epoch) / total_epochs
-            cosine_decay = 0.5 * (1 + np.cos(np.pi * progress))
-            return initial_lr * cosine_decay
-        callbacks_stage2.append(LearningRateScheduler(cosine_scheduler, verbose=1))
-    
-    history_stage2 = model.fit(
-        train_dataset,
-        epochs=config['training']['epochs_stage2'],
-        steps_per_epoch=steps_per_epoch,
-        validation_data=val_dataset,
-        validation_steps=validation_steps,
-        class_weight=class_weights,
-        callbacks=callbacks_stage2,
-        verbose=1
+
+
+def merge_histories(*histories: dict[str, list[float]]) -> dict[str, list[float]]:
+    merged: dict[str, list[float]] = {}
+    for history in histories:
+        for key, values in history.items():
+            merged.setdefault(key, []).extend(float(value) for value in values)
+    return merged
+
+
+def evaluate_model(model: tf.keras.Model, dataset: tf.data.Dataset) -> tuple[float, float]:
+    loss, accuracy = model.evaluate(dataset, verbose=0)
+    return float(loss), float(accuracy)
+
+
+def select_best_model(
+    artifact_dir: Path,
+    validation_dataset: tf.data.Dataset,
+) -> tuple[Path, dict[str, float]]:
+    candidates = {
+        "stage1": artifact_dir / "stage1_best.keras",
+        "stage2": artifact_dir / "stage2_best.keras",
+    }
+    best_stage = ""
+    best_path: Path | None = None
+    best_metrics = {"val_loss": float("inf"), "val_accuracy": float("-inf")}
+
+    for stage_name, model_path in candidates.items():
+        if not model_path.exists():
+            continue
+        model = tf.keras.models.load_model(model_path)
+        val_loss, val_accuracy = evaluate_model(model, validation_dataset)
+        if val_accuracy > best_metrics["val_accuracy"]:
+            best_stage = stage_name
+            best_path = model_path
+            best_metrics = {"val_loss": val_loss, "val_accuracy": val_accuracy}
+
+    if best_path is None:
+        raise FileNotFoundError("未找到可用的阶段模型检查点。")
+
+    final_model_path = artifact_dir / "best_model.keras"
+    if best_path.resolve() != final_model_path.resolve():
+        shutil.copy2(best_path, final_model_path)
+
+    metrics_path = artifact_dir / "best_model_metrics.json"
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "selected_stage": best_stage,
+                **best_metrics,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
     )
-    
-    # 重新构建模型（使用相同的 build_model 函数）
-    model, _ = build_model(config)
-    # 加载权重
-    model.load_weights(os.path.join(config['logging']['model_dir'], 'best_model_final.weights.h5'))
-    # 如果需要评估，则编译（可选）
-    model.compile(optimizer=config['training']['optimizer'], loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return final_model_path, best_metrics
 
-    # 在验证集上评估
-    y_true = []
-    y_pred = []
-    for images, labels in val_dataset:
-        preds = model.predict(images)
-        y_true.extend(labels.numpy())
-        y_pred.extend(np.argmax(preds, axis=1))
-        if len(y_true) >= num_val_images:
-            break
-    y_true = y_true[:num_val_images]
-    y_pred = y_pred[:num_val_images]
-    
-    # 保存混淆矩阵和分类报告
-    plot_confusion_matrix(y_true, y_pred, class_names,
-                          os.path.join(config['logging']['output_dir'], 'confusion_matrix.png'))
-    save_classification_report(y_true, y_pred, class_names,
-                               os.path.join(config['logging']['output_dir'], 'classification_report.txt'))
-    
-    # 绘制训练曲线（合并两个阶段的history）
-    combined_history = history_stage1.history
-    for k, v in history_stage2.history.items():
-        combined_history.setdefault(k, []).extend(v)
-    plot_training_history(combined_history,
-                          os.path.join(config['logging']['output_dir'], 'training_curves.png'))
-    
-    print("Training completed successfully.")
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='config.yaml', help='Path to config file')
+def collect_predictions(
+    model: tf.keras.Model,
+    dataset: tf.data.Dataset,
+) -> tuple[list[int], list[int]]:
+    y_true: list[int] = []
+    y_pred: list[int] = []
+
+    for images, labels in dataset:
+        probabilities = model.predict(images, verbose=0)
+        y_true.extend(int(label) for label in labels.numpy())
+        y_pred.extend(int(index) for index in tf.argmax(probabilities, axis=1).numpy())
+
+    return y_true, y_pred
+
+
+def main(config_path: Path) -> None:
+    config = load_config(config_path)
+    seed = int(config["data"].get("seed", 42))
+    tf.keras.utils.set_random_seed(seed)
+
+    artifact_dir, log_dir, report_dir = ensure_output_dirs(config)
+    train_ds, val_ds, class_names, class_weights = create_datasets(config)
+    save_class_names(class_names, artifact_dir / "class_names.json")
+
+    model, base_model = build_classifier(config)
+    compile_model(model, float(config["training"]["stage1_learning_rate"]))
+
+    print("开始阶段 1 训练：冻结 backbone。")
+    stage1_history = model.fit(
+        train_ds,
+        validation_data=val_ds,
+        epochs=int(config["training"]["stage1_epochs"]),
+        class_weight=class_weights,
+        callbacks=build_callbacks(
+            artifact_dir / "stage1_best.keras",
+            log_dir / "stage1_training.csv",
+            config,
+        ),
+        verbose=1,
+    )
+
+    print("开始阶段 2 训练：解冻最后若干层进行微调。")
+    set_backbone_trainable_layers(base_model, int(config["training"]["fine_tune_layers"]))
+    compile_model(model, float(config["training"]["stage2_learning_rate"]))
+
+    stage2_history = model.fit(
+        train_ds,
+        validation_data=val_ds,
+        epochs=int(config["training"]["stage2_epochs"]),
+        class_weight=class_weights,
+        callbacks=build_callbacks(
+            artifact_dir / "stage2_best.keras",
+            log_dir / "stage2_training.csv",
+            config,
+        ),
+        verbose=1,
+    )
+
+    combined_history = merge_histories(stage1_history.history, stage2_history.history)
+    save_history(combined_history, report_dir / "history.json")
+    plot_training_history(combined_history, report_dir / "training_curves.png")
+
+    best_model_path, best_metrics = select_best_model(artifact_dir, val_ds)
+    best_model = tf.keras.models.load_model(best_model_path)
+    y_true, y_pred = collect_predictions(best_model, val_ds)
+
+    plot_confusion_matrix(y_true, y_pred, class_names, report_dir / "confusion_matrix.png")
+    save_classification_report(
+        y_true,
+        y_pred,
+        class_names,
+        report_dir / "classification_report.txt",
+    )
+
+    print(f"训练完成，最佳模型已保存到: {best_model_path}")
+    print(
+        f"验证集指标: loss={best_metrics['val_loss']:.4f}, "
+        f"accuracy={best_metrics['val_accuracy']:.4f}"
+    )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="训练 TensorFlow 2.x 轻量级三分类模型")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config.yaml"),
+        help="配置文件路径",
+    )
     args = parser.parse_args()
     main(args.config)
