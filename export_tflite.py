@@ -7,6 +7,7 @@ from typing import Any
 
 import tensorflow as tf
 import yaml
+from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
 
 
 def build_converter(
@@ -21,8 +22,9 @@ def build_converter(
         return model(inputs, training=False)
 
     concrete_function = serving_fn.get_concrete_function()
+    frozen_function = convert_variables_to_constants_v2(concrete_function)
     return tf.lite.TFLiteConverter.from_concrete_functions(
-        [concrete_function],
+        [frozen_function],
         model,
     )
 
@@ -67,7 +69,9 @@ def main(
 
     class_names_path = model_path.parent / "class_names.json"
     if class_names_path.exists():
-        shutil.copy2(class_names_path, resolved_output.parent / "class_names.json")
+        target_class_names_path = resolved_output.parent / "class_names.json"
+        if class_names_path.resolve() != target_class_names_path.resolve():
+            shutil.copy2(class_names_path, target_class_names_path)
 
     print(f"TFLite 模型已导出到: {resolved_output}")
 

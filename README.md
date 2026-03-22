@@ -1,10 +1,10 @@
 # TensorFlow 2.x 轻量级图像分类项目
 
-这个项目基于 TensorFlow 2.x 和迁移学习，实现 `64x64` 彩色图像的 3 分类。默认使用 `MobileNetV3Small` 的 ImageNet 预训练权重，兼顾轻量、训练稳定和 TFLite 导出友好。
+这个项目基于 TensorFlow 2.x 和迁移学习，实现 `64x64` 彩色图像的 3 分类。默认使用 `MobileNetV3Large` 的 ImageNet 预训练权重，也支持切换到 `MobileNetV3Small`。
 
 ## 项目特性
 
-- 使用 `MobileNetV3Small` 作为固定 backbone
+- 支持 `MobileNetV3Small` 和 `MobileNetV3Large` 两种 backbone
 - 支持目录式三分类数据集，兼容 `png/jpg/jpeg`
 - 提供两阶段训练：冻结特征提取器 + 局部微调
 - 自动保存最佳 `.keras` 模型、类别名称、训练日志和评估图表
@@ -76,10 +76,17 @@ data/
 默认配置位于 `config.yaml`：
 
 - `data`：数据路径、输入尺寸、batch size、随机种子
-- `model`：固定 backbone、预训练权重和 dropout
+- `model`：backbone 选择、预训练权重和 dropout
 - `training`：两阶段 epoch、学习率、微调层数和回调参数
 - `paths`：模型、日志和报告输出目录
 - `export`：TFLite 默认导出配置
+
+其中 `model.backbone` 当前支持：
+
+- `MobileNetV3Small`
+- `MobileNetV3Large`
+
+如果切换到 `MobileNetV3Large`，建议优先把 `batch_size` 调小到 `16` 或 `24`，并在训练完成后重新导出 `.tflite` 模型。
 
 ## 训练模型
 
@@ -188,12 +195,13 @@ python compare_keras_tflite.py \
 - 输入尺寸：`64x64x3`
 - 类别数：`3`
 - 验证切分：`15%`
-- batch size：`32`
-- 阶段 1：`12` 个 epoch，学习率 `1e-3`
-- 阶段 2：`36` 个 epoch，学习率 `1e-4`
-- 微调层数：backbone 最后 `12` 层
-- dropout：`0.2`
-- 数据增强：水平翻转、轻微旋转 `0.02`、轻微缩放 `0.05`
+- 默认 backbone：`MobileNetV3Large`
+- batch size：`16`
+- 阶段 1：`12` 个 epoch，学习率 `8e-4`
+- 阶段 2：`60` 个 epoch，学习率 `5e-5`
+- 微调层数：backbone 最后 `30` 层
+- dropout：`0.25`
+- 数据增强：水平翻转、轻微旋转 `0.02`、轻微缩放 `0.05`、亮度扰动 `0.1`、对比度扰动 `0.12`
 - 回调：`ModelCheckpoint`、`EarlyStopping`、`ReduceLROnPlateau`、`CSVLogger`
 
 ## 常见问题

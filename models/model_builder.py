@@ -4,29 +4,35 @@ from typing import Any
 
 import tensorflow as tf
 from tensorflow.keras import Model, layers # type: ignore
-from tensorflow.keras.applications import MobileNetV3Small # type: ignore
+from tensorflow.keras.applications import MobileNetV3Large, MobileNetV3Small # type: ignore
 
-SUPPORTED_BACKBONE = "MobileNetV3Small"
+BACKBONE_BUILDERS = {
+    "MobileNetV3Small": MobileNetV3Small,
+    "MobileNetV3Large": MobileNetV3Large,
+}
+DEFAULT_BACKBONE = "MobileNetV3Small"
 
 
 def build_classifier(config: dict[str, Any]) -> tuple[Model, tf.keras.Model]:
-    """Build the MobileNetV3Small transfer learning classifier."""
+    """Build a MobileNetV3 transfer learning classifier."""
     model_cfg = config["model"]
     data_cfg = config["data"]
 
-    backbone_name = model_cfg.get("backbone", SUPPORTED_BACKBONE)
-    if backbone_name != SUPPORTED_BACKBONE:
+    backbone_name = model_cfg.get("backbone", DEFAULT_BACKBONE)
+    if backbone_name not in BACKBONE_BUILDERS:
         raise ValueError(
-            f"当前版本仅支持 {SUPPORTED_BACKBONE}，收到: {backbone_name}"
+            "当前版本仅支持以下 backbone: "
+            f"{sorted(BACKBONE_BUILDERS)}，收到: {backbone_name}"
         )
 
     input_shape = tuple(data_cfg["image_size"]) + (3,)
     num_classes = int(data_cfg["num_classes"])
     dropout_rate = float(model_cfg.get("dropout_rate", 0.2))
+    backbone_builder = BACKBONE_BUILDERS[backbone_name]
 
     # Keep MobileNetV3's built-in preprocessing enabled so the backbone
     # receives the same input scale as the ImageNet pretraining setup.
-    base_model = MobileNetV3Small(
+    base_model = backbone_builder(
         input_shape=input_shape,
         include_top=False,
         weights=model_cfg.get("weights", "imagenet"),
@@ -43,7 +49,11 @@ def build_classifier(config: dict[str, Any]) -> tuple[Model, tf.keras.Model]:
         name="predictions",
     )(x)
 
-    model = Model(inputs=inputs, outputs=outputs, name="mobilenetv3small_classifier")
+    model = Model(
+        inputs=inputs,
+        outputs=outputs,
+        name=f"{backbone_name.lower()}_classifier",
+    )
     return model, base_model
 
 

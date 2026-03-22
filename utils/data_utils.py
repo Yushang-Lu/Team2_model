@@ -170,12 +170,26 @@ def prepare_dataset(
     augmentation_cfg: dict[str, Any] | None = None,
     cache: bool = False,
 ) -> tf.data.Dataset:
-    augmenter = build_augmenter(augmentation_cfg or {})
+    augmentation_cfg = augmentation_cfg or {}
+    augmenter = build_augmenter(augmentation_cfg)
+    brightness_delta = float(augmentation_cfg.get("brightness_delta", 0.0))
+    contrast_factor = float(augmentation_cfg.get("contrast_factor", 0.0))
 
     def preprocess_train(images: tf.Tensor, labels: tf.Tensor) -> tuple[tf.Tensor, tf.Tensor]:
         images = tf.cast(images, tf.float32)
         if augmenter is not None:
             images = augmenter(images, training=True)
+        if brightness_delta > 0 or contrast_factor > 0:
+            images = images / 255.0
+            if brightness_delta > 0:
+                images = tf.image.random_brightness(images, max_delta=brightness_delta)
+            if contrast_factor > 0:
+                images = tf.image.random_contrast(
+                    images,
+                    lower=max(0.0, 1.0 - contrast_factor),
+                    upper=1.0 + contrast_factor,
+                )
+            images = tf.clip_by_value(images, 0.0, 1.0) * 255.0
         images = preprocess_input(images)
         return images, labels
 
