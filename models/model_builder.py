@@ -62,11 +62,18 @@ def set_backbone_trainable_layers(
     fine_tune_layers: int,
 ) -> None:
     """Unfreeze the tail of the backbone while keeping BatchNorm frozen."""
+    if fine_tune_layers == 0:
+        base_model.trainable = False
+        for layer in base_model.layers:
+            layer.trainable = False
+        return
+
+    # Mark the nested model itself trainable first, then explicitly freeze or
+    # unfreeze child layers. This keeps the fine-tuning intent visible in both
+    # the parent model and the backbone's own trainable state.
+    base_model.trainable = True
     for layer in base_model.layers:
         layer.trainable = False
-
-    if fine_tune_layers == 0:
-        return
 
     if fine_tune_layers < 0:
         candidate_layers = list(base_model.layers)
