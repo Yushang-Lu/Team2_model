@@ -8,7 +8,7 @@
 - 支持目录式三分类数据集，兼容 `png/jpg/jpeg`
 - 提供两阶段训练：冻结特征提取器 + 局部微调
 - 自动保存最佳 `.keras` 模型、类别名称、训练日志和评估图表
-- 提供单图预测、TFLite 导出、TFLite 测试和 Keras/TFLite 对比评估脚本
+- 提供 `.keras` / `.tflite` 单图预测、TFLite 导出、TFLite 测试和 Keras/TFLite 对比评估脚本
 
 ## 目录结构
 
@@ -17,6 +17,7 @@ Team2_model/
 ├── config.yaml
 ├── train.py
 ├── predict.py
+├── predict_tflite.py
 ├── export_tflite.py
 ├── evaluate_tflite.py
 ├── compare_keras_tflite.py
@@ -113,7 +114,7 @@ python train.py --config config.yaml
 - `reports/confusion_matrix.png`
 - `reports/classification_report.txt`
 
-## 单图预测
+## 单图预测（Keras）
 
 ```bash
 python predict.py --model artifacts/best_model.keras --image path/to/image.png
@@ -126,6 +127,22 @@ python predict.py \
   --model artifacts/best_model.keras \
   --image path/to/image.jpg \
   --class-names artifacts/class_names.json
+```
+
+## 单图预测（TFLite）
+
+```bash
+python predict_tflite.py --model artifacts/model.tflite --image path/to/image.png
+```
+
+如果 `class_names.json` 与 `.tflite` 模型放在同一目录下，脚本也会自动读取；也可以手动指定，并通过 `--num-threads` 调整推理线程数：
+
+```bash
+python predict_tflite.py \
+  --model artifacts/model.tflite \
+  --image path/to/image.jpg \
+  --class-names artifacts/class_names.json \
+  --num-threads 2
 ```
 
 ## 导出 TFLite
