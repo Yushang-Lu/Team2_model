@@ -9,7 +9,7 @@ from typing import Any
 import tensorflow as tf
 import yaml
 
-from models.model_builder import build_classifier, set_backbone_trainable_layers
+from models import build_classifier, prepare_stage2_training, resolve_builder_name
 from utils.data_utils import create_datasets, save_class_names
 from utils.visualize import (
     plot_confusion_matrix,
@@ -91,12 +91,9 @@ def evaluate_model(model: tf.keras.Model, dataset: tf.data.Dataset) -> tuple[flo
 
 def select_best_model(
     artifact_dir: Path,
+    candidates: dict[str, Path],
     validation_dataset: tf.data.Dataset,
 ) -> tuple[Path, dict[str, float]]:
-    candidates = {
-        "stage1": artifact_dir / "stage1_best.keras",
-        "stage2": artifact_dir / "stage2_best.keras",
-    }
     best_stage = ""
     best_path: Path | None = None
     best_metrics = {"val_loss": float("inf"), "val_accuracy": float("-inf")}
@@ -157,10 +154,13 @@ def main(config_path: Path) -> None:
     train_ds, val_ds, class_names, class_weights = create_datasets(config)
     save_class_names(class_names, artifact_dir / "class_names.json")
 
-    model, base_model = build_classifier(config)
+    builder_name = resolve_builder_name(config)
+    build_result = build_classifier(config)
+    model = build_result.model
     compile_model(model, float(config["training"]["stage1_learning_rate"]))
 
-    print("开始阶段 1 训练：冻结 backbone。")
+    print(f"开始阶段 1 训练：builder={builder_name}。")
+    stage_candidates = {"stage1": artifact_dir / "stage1_best.keras"}
     stage1_history = model.fit(
         train_ds,
         validation_data=val_ds,
@@ -174,28 +174,33 @@ def main(config_path: Path) -> None:
         verbose=1,
     )
 
-    print("开始阶段 2 训练：解冻最后若干层进行微调。")
-    set_backbone_trainable_layers(base_model, int(config["training"]["fine_tune_layers"]))
-    compile_model(model, float(config["training"]["stage2_learning_rate"]))
+    histories = [stage1_history.history]
+    if prepare_stage2_training(build_result, int(config["training"]["fine_tune_layers"])):
+        print("开始阶段 2 训练：解冻最后若干层进行微调。")
+        compile_model(model, float(config["training"]["stage2_learning_rate"]))
+        stage_candidates["stage2"] = artifact_dir / "stage2_best.keras"
 
-    stage2_history = model.fit(
-        train_ds,
-        validation_data=val_ds,
-        epochs=int(config["training"]["stage2_epochs"]),
-        class_weight=class_weights,
-        callbacks=build_callbacks(
-            artifact_dir / "stage2_best.keras",
-            log_dir / "stage2_training.csv",
-            config,
-        ),
-        verbose=1,
-    )
+        stage2_history = model.fit(
+            train_ds,
+            validation_data=val_ds,
+            epochs=int(config["training"]["stage2_epochs"]),
+            class_weight=class_weights,
+            callbacks=build_callbacks(
+                artifact_dir / "stage2_best.keras",
+                log_dir / "stage2_training.csv",
+                config,
+            ),
+            verbose=1,
+        )
+        histories.append(stage2_history.history)
+    else:
+        print(f"builder={builder_name} 不支持阶段 2 微调，已跳过。")
 
-    combined_history = merge_histories(stage1_history.history, stage2_history.history)
+    combined_history = merge_histories(*histories)
     save_history(combined_history, report_dir / "history.json")
     plot_training_history(combined_history, report_dir / "training_curves.png")
 
-    best_model_path, best_metrics = select_best_model(artifact_dir, val_ds)
+    best_model_path, best_metrics = select_best_model(artifact_dir, stage_candidates, val_ds)
     best_model = tf.keras.models.load_model(best_model_path)
     y_true, y_pred = collect_predictions(best_model, val_ds)
 

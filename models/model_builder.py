@@ -6,6 +6,8 @@ import tensorflow as tf
 from tensorflow.keras import Model, layers # type: ignore
 from tensorflow.keras.applications import MobileNetV3Large, MobileNetV3Small # type: ignore
 
+from .base import ModelBuildResult
+
 BACKBONE_BUILDERS = {
     "MobileNetV3Small": MobileNetV3Small,
     "MobileNetV3Large": MobileNetV3Large,
@@ -13,7 +15,7 @@ BACKBONE_BUILDERS = {
 DEFAULT_BACKBONE = "MobileNetV3Small"
 
 
-def build_classifier(config: dict[str, Any]) -> tuple[Model, tf.keras.Model]:
+def build_classifier(config: dict[str, Any]) -> ModelBuildResult:
     """Build a MobileNetV3 transfer learning classifier."""
     model_cfg = config["model"]
     data_cfg = config["data"]
@@ -30,12 +32,11 @@ def build_classifier(config: dict[str, Any]) -> tuple[Model, tf.keras.Model]:
     dropout_rate = float(model_cfg.get("dropout_rate", 0.2))
     backbone_builder = BACKBONE_BUILDERS[backbone_name]
 
-    # Keep MobileNetV3's built-in preprocessing enabled so the backbone
-    # receives the same input scale as the ImageNet pretraining setup.
     base_model = backbone_builder(
         input_shape=input_shape,
         include_top=False,
         weights=model_cfg.get("weights", "imagenet"),
+        include_preprocessing=True,
     )
     base_model.trainable = False
 
@@ -54,7 +55,11 @@ def build_classifier(config: dict[str, Any]) -> tuple[Model, tf.keras.Model]:
         outputs=outputs,
         name=f"{backbone_name.lower()}_classifier",
     )
-    return model, base_model
+    return ModelBuildResult(
+        model=model,
+        fine_tune_target=base_model,
+        supports_stage2=True,
+    )
 
 
 def set_backbone_trainable_layers(

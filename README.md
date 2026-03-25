@@ -1,12 +1,13 @@
 # TensorFlow 2.x 轻量级图像分类项目
 
-这个项目基于 TensorFlow 2.x 和迁移学习，实现 `64x64` 彩色图像的 3 分类。默认使用 `MobileNetV3Large` 的 ImageNet 预训练权重，也支持切换到 `MobileNetV3Small`。
+这个项目基于 TensorFlow 2.x，实现 `64x64` 彩色图像的 3 分类。默认使用 `MobileNetV3Large` 的迁移学习方案，也支持切换到自定义轻量 CNN。
 
 ## 项目特性
 
-- 支持 `MobileNetV3Small` 和 `MobileNetV3Large` 两种 backbone
+- 支持 `mobilenet` 和 `conv` 两种模型构建方式
+- `mobilenet` 模式下支持 `MobileNetV3Small` 和 `MobileNetV3Large` 两种 backbone
 - 支持目录式三分类数据集，兼容 `png/jpg/jpeg`
-- 提供两阶段训练：冻结特征提取器 + 局部微调
+- 支持迁移学习双阶段训练，也支持轻量 CNN 单阶段训练
 - 自动保存最佳 `.keras` 模型、类别名称、训练日志和评估图表
 - 提供 `.keras` / `.tflite` 单图预测、TFLite 导出、TFLite 测试和 Keras/TFLite 对比评估脚本
 
@@ -22,6 +23,7 @@ Team2_model/
 ├── evaluate_tflite.py
 ├── compare_keras_tflite.py
 ├── models/
+│   ├── conv_builder.py
 │   └── model_builder.py
 ├── utils/
 │   ├── data_utils.py
@@ -77,17 +79,32 @@ data/
 默认配置位于 `config.yaml`：
 
 - `data`：数据路径、输入尺寸、batch size、随机种子
-- `model`：backbone 选择、预训练权重和 dropout
+- `model`：builder 选择、backbone 选择、预训练权重和 dropout
 - `training`：两阶段 epoch、学习率、微调层数和回调参数
 - `paths`：模型、日志和报告输出目录
 - `export`：TFLite 默认导出配置
 
-其中 `model.backbone` 当前支持：
+其中 `model.builder` 当前支持：
+
+- `mobilenet`
+- `conv`
+
+当 `model.builder: mobilenet` 时，`model.backbone` 当前支持：
 
 - `MobileNetV3Small`
 - `MobileNetV3Large`
 
 如果切换到 `MobileNetV3Large`，建议优先把 `batch_size` 调小到 `16` 或 `24`，并在训练完成后重新导出 `.tflite` 模型。
+
+如果切换到 `model.builder: conv`，训练会自动改为单阶段，从头训练轻量 CNN，不再执行第二阶段微调。
+
+示例：
+
+```yaml
+model:
+  builder: conv
+  dropout_rate: 0.25
+```
 
 ## 训练模型
 
@@ -98,8 +115,8 @@ python train.py --config config.yaml
 训练脚本会自动完成：
 
 - 加载目录式数据集并保存 `artifacts/class_names.json`
-- 阶段 1：冻结 backbone 训练分类头
-- 阶段 2：解冻最后 60 层做微调
+- `mobilenet`：阶段 1 冻结 backbone 训练分类头，阶段 2 解冻最后若干层做微调
+- `conv`：单阶段从头训练，自动跳过微调阶段
 - 选择验证集表现更好的阶段模型，保存为 `artifacts/best_model.keras`
 - 输出训练曲线、混淆矩阵、分类报告和阶段日志
 
@@ -109,7 +126,7 @@ python train.py --config config.yaml
 - `artifacts/class_names.json`
 - `artifacts/best_model_metrics.json`
 - `logs/stage1_training.csv`
-- `logs/stage2_training.csv`
+- `logs/stage2_training.csv`（仅 `mobilenet` 模式）
 - `reports/training_curves.png`
 - `reports/confusion_matrix.png`
 - `reports/classification_report.txt`
@@ -212,6 +229,7 @@ python compare_keras_tflite.py \
 - 输入尺寸：`64x64x3`
 - 类别数：`3`
 - 验证切分：`15%`
+- 默认 builder：`mobilenet`
 - 默认 backbone：`MobileNetV3Large`
 - batch size：`16`
 - 阶段 1：`12` 个 epoch，学习率 `8e-4`
@@ -220,6 +238,7 @@ python compare_keras_tflite.py \
 - dropout：`0.25`
 - 数据增强：水平翻转、轻微旋转 `0.02`、轻微缩放 `0.05`、亮度扰动 `0.1`、对比度扰动 `0.12`
 - 回调：`ModelCheckpoint`、`EarlyStopping`、`ReduceLROnPlateau`、`CSVLogger`
+- `conv` 模式默认复用阶段 1 的 epoch 和学习率配置，并把输入归一化封装在模型内部，保证训练、Keras 预测和 TFLite 推理一致
 
 ## 常见问题
 

@@ -4,29 +4,30 @@ data:
   test_dir: null
   validation_split: 0.15
   image_size: [64, 64]
-  batch_size: 16
+  batch_size: 32
   num_classes: 3
   seed: 42
   augmentation:
     horizontal_flip: true
-    rotation_factor: 0.02
-    zoom_factor: 0.05
-    brightness_delta: 0.1
-    contrast_factor: 0.12
+    rotation_factor: 0.03
+    zoom_factor: 0.08
+    brightness_delta: 0.08
+    contrast_factor: 0.1
 
 model:
-  backbone: MobileNetV3Large
-  weights: imagenet
-  dropout_rate: 0.25
+  builder: conv  # options: mobilenet, conv
+  backbone: MobileNetV3Large  # only used when builder=mobilenet
+  weights: imagenet  # only used when builder=mobilenet
+  dropout_rate: 0.3
 
 training:
-  stage1_epochs: 12
-  stage2_epochs: 60
-  stage1_learning_rate: 0.0008
-  stage2_learning_rate: 0.00005
-  fine_tune_layers: 30
-  early_stopping_patience: 12
-  reduce_lr_patience: 2
+  stage1_epochs: 30
+  stage2_epochs: 0  # ignored when builder=conv
+  stage1_learning_rate: 0.001
+  stage2_learning_rate: 0.0001  # ignored when builder=conv
+  fine_tune_layers: 0  # ignored when builder=conv
+  early_stopping_patience: 6
+  reduce_lr_patience: 3
   reduce_lr_factor: 0.5
 
 paths:

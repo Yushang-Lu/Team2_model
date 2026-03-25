@@ -7,7 +7,6 @@ from typing import Any
 import numpy as np
 import tensorflow as tf
 from sklearn.utils.class_weight import compute_class_weight
-from tensorflow.keras.applications.mobilenet_v3 import preprocess_input # type: ignore
 
 AUTOTUNE = tf.data.AUTOTUNE
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
@@ -190,12 +189,10 @@ def prepare_dataset(
                     upper=1.0 + contrast_factor,
                 )
             images = tf.clip_by_value(images, 0.0, 1.0) * 255.0
-        images = preprocess_input(images)
         return images, labels
 
     def preprocess_eval(images: tf.Tensor, labels: tf.Tensor) -> tuple[tf.Tensor, tf.Tensor]:
         images = tf.cast(images, tf.float32)
-        images = preprocess_input(images)
         return images, labels
 
     preprocess_fn = preprocess_train if training else preprocess_eval

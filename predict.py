@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 from PIL import Image
-from tensorflow.keras.applications.mobilenet_v3 import preprocess_input # type: ignore
 
 from utils.data_utils import load_class_names
 
@@ -23,7 +22,6 @@ def load_image(image_path: Path, target_size: tuple[int, int]) -> np.ndarray:
         image = image.convert("RGB")
         image = image.resize(target_size, resampling.BILINEAR)
         image_array = np.asarray(image, dtype=np.float32)
-    image_array = preprocess_input(image_array)
     return np.expand_dims(image_array, axis=0)
 
 
