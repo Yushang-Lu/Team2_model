@@ -8,11 +8,11 @@ data:
   num_classes: 3
   seed: 42
   augmentation:
-    horizontal_flip: true
-    rotation_factor: 0.03
-    zoom_factor: 0.08
-    brightness_delta: 0.08
-    contrast_factor: 0.1
+    horizontal_flip: false
+    rotation_factor: 0.05
+    zoom_factor: 0.1
+    brightness_delta: 0.1
+    contrast_factor: 0.12
 
 model:
   builder: conv  # options: mobilenet, conv
@@ -21,13 +21,13 @@ model:
   dropout_rate: 0.3
 
 training:
-  stage1_epochs: 30
+  stage1_epochs: 60
   stage2_epochs: 0  # ignored when builder=conv
-  stage1_learning_rate: 0.001
+  stage1_learning_rate: 0.0002
   stage2_learning_rate: 0.0001  # ignored when builder=conv
   fine_tune_layers: 0  # ignored when builder=conv
-  early_stopping_patience: 6
-  reduce_lr_patience: 3
+  early_stopping_patience: 12
+  reduce_lr_patience: 4
   reduce_lr_factor: 0.5
 
 paths:
